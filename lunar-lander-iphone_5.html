@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>EAGLE — Lunar Descent (Tilt)</title>
+<style>
+  :root{
+    --amber:#ffb347; --amber-dim:#8a5a1f;
+    --green:#4fe06a; --red:#ff4a3d; --readout:#c9ffb0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;touch-action:none}
+  html,body{height:100%;background:#000;overflow:hidden;font-family:"Courier New",monospace;color:var(--readout);overscroll-behavior:none;position:fixed;width:100%}
+  #scene{position:absolute;inset:0;width:100%;height:100%;display:block;background:#000}
+
+  /* Top HUD strip */
+  #hud{
+    position:absolute;top:0;left:0;right:0;
+    padding:calc(env(safe-area-inset-top) + 8px) 12px 8px;
+    display:flex;gap:8px;z-index:5;pointer-events:none;
+    background:linear-gradient(180deg,rgba(0,0,0,.75),rgba(0,0,0,0));
+  }
+  .cell{flex:1;background:rgba(4,8,4,.55);border:1px solid #1e2a1e;border-radius:5px;padding:5px 7px;backdrop-filter:blur(2px)}
+  .cell .lbl{font-size:8px;letter-spacing:1.5px;color:#6f8a6f;text-transform:uppercase}
+  .cell .val{font-size:17px;color:var(--readout);font-variant-numeric:tabular-nums;line-height:1.15}
+  .cell .u{font-size:9px;color:#5f7a5f}
+  .cell.warnv .val{color:var(--red)}
+
+  /* Bottom bars */
+  #bottom{
+    position:absolute;left:0;right:0;bottom:0;z-index:5;pointer-events:none;
+    padding:8px 12px calc(env(safe-area-inset-bottom) + 10px);
+    background:linear-gradient(0deg,rgba(0,0,0,.8),rgba(0,0,0,0));
+  }
+  #status{
+    text-align:center;font-size:11px;letter-spacing:1px;margin-bottom:7px;color:var(--green);
+  }
+  #status.warn{color:var(--amber)} #status.bad{color:var(--red)}
+  .barrow{display:flex;align-items:center;gap:8px;margin-top:5px}
+  .barrow span{font-size:8px;letter-spacing:1px;color:#6f8a6f;width:34px;text-transform:uppercase}
+  .bar{flex:1;height:9px;background:#0d120d;border:1px solid #223022;border-radius:3px;overflow:hidden}
+  .bar>i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#4fe06a,#a6ff9e)}
+  .bar.fuel>i{background:linear-gradient(90deg,#ffb347,#ffe08a)}
+  .bar.warn>i{background:linear-gradient(90deg,#ff6a3d,#ff4a3d)}
+  .barrow em{font-size:9px;color:#7a927a;width:30px;text-align:right;font-style:normal}
+
+  /* Tilt indicator (attitude) center-top */
+  #tiltInd{
+    position:absolute;top:calc(env(safe-area-inset-top) + 66px);left:50%;transform:translateX(-50%);
+    z-index:5;pointer-events:none;text-align:center;
+  }
+  #tiltInd .ring{width:66px;height:66px;border:2px solid rgba(120,200,120,.35);border-radius:50%;position:relative;margin:0 auto}
+  #tiltInd .needle{position:absolute;left:50%;top:50%;width:2px;height:30px;background:var(--green);transform-origin:bottom center;transform:translate(-50%,-100%)}
+  #tiltInd small{display:block;font-size:8px;color:#6f8a6f;letter-spacing:1px;margin-top:3px}
+
+  /* Overlay */
+  #overlay{
+    position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;text-align:center;
+    padding:calc(env(safe-area-inset-top) + 24px) 26px calc(env(safe-area-inset-bottom) + 24px);
+    background:radial-gradient(circle at 50% 38%,rgba(0,0,0,.6),rgba(0,0,0,.94));overflow-y:auto;
+  }
+  #overlay.hidden{display:none}
+  #overlay .sub{font-size:10px;color:#5f7a5f;letter-spacing:3px;text-transform:uppercase}
+  #overlay h1{font-size:32px;letter-spacing:5px;color:var(--amber);font-weight:normal;text-transform:uppercase;text-shadow:0 0 16px rgba(255,179,71,.4)}
+  #overlay h1.good{color:var(--green);text-shadow:0 0 16px rgba(79,224,106,.4)}
+  #overlay h1.bad{color:var(--red);text-shadow:0 0 16px rgba(255,74,61,.4)}
+  #overlay p{max-width:340px;font-size:13px;line-height:1.65;color:#9fb59f}
+  #overlay p b{color:var(--readout)}
+  .btn{background:transparent;border:1px solid var(--amber);color:var(--amber);padding:14px 30px;
+    font-family:inherit;font-size:14px;letter-spacing:2px;border-radius:4px;text-transform:uppercase}
+  .btn:active{background:var(--amber);color:#000}
+  .diff{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+  .diff button{background:transparent;border:1px solid #3a5a3a;color:#8fb58f;padding:9px 12px;
+    font-family:inherit;font-size:11px;letter-spacing:1px;border-radius:4px}
+  .diff button.sel{border-color:var(--green);color:var(--green);background:#0a1a0a}
+  .howto{font-size:11px;line-height:1.9;color:#8fb58f;max-width:340px;border:1px solid #1e2a1e;border-radius:6px;padding:12px 14px;background:rgba(4,8,4,.5)}
+  .howto b{color:var(--amber)}
+  .howto .k{display:inline-block;min-width:74px;color:var(--amber)}
+  #stats{font-size:11px;color:#7a927a;line-height:1.7}
+  #stats b{color:var(--readout)}
+  #calibNote{font-size:10px;color:#5f7a5f;max-width:320px;line-height:1.5}
+  .toggle{display:flex;align-items:center;gap:8px;font-size:11px;color:#8fb58f}
+  .sw{width:40px;height:22px;border:1px solid #3a5a3a;border-radius:12px;position:relative;transition:.15s}
+  .sw.on{border-color:var(--green);background:#0a1a0a}
+  .sw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#5f7a5f;transition:.15s}
+  .sw.on i{left:20px;background:var(--green)}
+
+  /* Recalibrate + mute buttons on-screen */
+  #hudBtns{position:absolute;top:calc(env(safe-area-inset-top) + 66px);right:10px;z-index:6;display:flex;flex-direction:column;gap:6px}
+  #hudBtns button{background:rgba(4,8,4,.6);border:1px solid #2a3a2a;color:#8fb58f;width:44px;height:30px;
+    font-family:inherit;font-size:9px;letter-spacing:1px;border-radius:5px}
+  #hudBtns.hidden{display:none}
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<!-- In-flight HUD -->
+<div id="hud">
+  <div class="cell"><div class="lbl">Alt AGL</div><div class="val"><span id="g-alt">0</span><span class="u"> m</span></div></div>
+  <div class="cell" id="c-vy"><div class="lbl">V.Spd</div><div class="val"><span id="g-vy">0.0</span><span class="u"> m/s</span></div></div>
+  <div class="cell" id="c-vx"><div class="lbl">H.Spd</div><div class="val"><span id="g-vx">0.0</span><span class="u"> m/s</span></div></div>
+  <div class="cell"><div class="lbl">Thr</div><div class="val"><span id="g-thr">0</span><span class="u"> %</span></div></div>
+</div>
+
+<div id="tiltInd">
+  <div class="ring"><div class="needle" id="needle"></div></div>
+  <small>ATTITUDE</small>
+</div>
+
+<div id="hudBtns" class="hidden">
+  <button id="btnMute">MUTE</button>
+</div>
+
+<!-- Bottom bars -->
+<div id="bottom">
+  <div id="status">STANDBY</div>
+  <div class="barrow"><span>Fuel</span><div class="bar fuel"><i id="b-fuel"></i></div><em id="g-fuel">100%</em></div>
+  <div class="barrow"><span>RCS</span><div class="bar"><i id="b-rcs"></i></div><em id="g-rcs">100%</em></div>
+</div>
+
+<!-- Overlay / start -->
+<div id="overlay">
+  <div class="sub">Lunar Module · Touch Control</div>
+  <h1>EAGLE</h1>
+  <p>Land an Apollo-class Lunar Module by swiping the screen. Real lunar gravity, real inertia, limited fuel.</p>
+  <div class="howto">
+    <div><span class="k">Swipe up</span> increase descent-engine throttle</div>
+    <div><span class="k">Swipe down</span> decrease throttle</div>
+    <div><span class="k">Swipe left</span> tilt the module left</div>
+    <div><span class="k">Swipe right</span> tilt the module right</div>
+    <div style="margin-top:6px;color:#7a927a">Set down gently: under <b>2 m/s</b> down, near-zero drift, nearly level, on the lit pad.</div>
+  </div>
+  <div class="sub">Landing zone</div>
+  <div class="diff">
+    <button data-d="cadet">Tranquility</button>
+    <button data-d="pilot" class="sel">Highland</button>
+    <button data-d="ace">Crater Rim</button>
+  </div>
+  <label class="toggle">Voice comms <div class="sw on" id="voiceSw"><i></i></div></label>
+  <button class="btn" id="startBtn">Begin Descent</button>
+  <div id="calibNote">Keep one finger on the screen and drag: up/down controls thrust, left/right tilts the module. You can lift and re-drag as often as you like.</div>
+  <div id="stats"></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const cv=document.getElementById('scene'), ctx=cv.getContext('2d');
+  let W=0,H=0,DPR=Math.min(window.devicePixelRatio||1,2.5);
+  function resize(){
+    W=window.innerWidth; H=window.innerHeight;
+    cv.width=W*DPR; cv.height=H*DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize',resize);
+  window.addEventListener('orientationchange',()=>setTimeout(resize,300));
+
+  // ---------- Physics ----------
+  const G=1.62, DRY_MASS=4700, FUEL_MASS_FULL=8200, MAX_THRUST=45000,
+        FUEL_BURN_AT_FULL=15, RCS_BURN=3.5, WORLD_SCALE=2.4;
+  const LIMITS={vy:2.0,vx:1.2,tilt:6};
+  const DIFF={
+    cadet:{name:"SEA OF TRANQUILITY",startAlt:250,rough:0.25,pad:150,fuel:1.0},
+    pilot:{name:"HIGHLAND APPROACH", startAlt:320,rough:0.6, pad:100,fuel:0.85},
+    ace:{name:"CRATER RIM",           startAlt:400,rough:1.1, pad:66, fuel:0.68}
+  };
+  let difficulty='pilot';
+
+  // ---------- Touch (finger-drag) input ----------
+  // Vertical drag  -> throttle (up = more thrust, down = less)
+  // Horizontal drag -> module pitch (left = tilt left, right = tilt right)
+  const drag={ active:false, id:null, lastX:0, lastY:0,
+               throttleCmd:0, tiltCmd:0 };   // command targets driven by finger movement
+  // sensitivity: how much a full-screen swipe changes each axis
+  const THROTTLE_SENS = 1.9;   // fraction of full throttle per full screen-height swipe
+  const TILT_SENS     = 2.4;   // fraction of full tilt range per full screen-width swipe
+
+  function touchStart(e){
+    if(drag.active) return;
+    const t=e.changedTouches[0];
+    // ignore touches that start on HUD buttons (they have their own handlers)
+    drag.active=true; drag.id=t.identifier; drag.lastX=t.clientX; drag.lastY=t.clientY;
+  }
+  function touchMove(e){
+    if(!drag.active) return;
+    let t=null;
+    for(const ct of e.changedTouches){ if(ct.identifier===drag.id){ t=ct; break; } }
+    if(!t) return;
+    const dx=(t.clientX-drag.lastX)/W;   // normalized by screen size
+    const dy=(t.clientY-drag.lastY)/H;
+    drag.lastX=t.clientX; drag.lastY=t.clientY;
+    // up on screen = negative dy = increase throttle
+    drag.throttleCmd = Math.max(0, Math.min(1, drag.throttleCmd - dy*THROTTLE_SENS));
+    // right on screen = positive dx = tilt right; left = tilt left
+    drag.tiltCmd = Math.max(-1, Math.min(1, drag.tiltCmd + dx*TILT_SENS));
+    e.preventDefault();
+  }
+  function touchEnd(e){
+    for(const ct of e.changedTouches){ if(ct.identifier===drag.id){ drag.active=false; drag.id=null; break; } }
+  }
+  function resetInput(){ drag.active=false; drag.id=null; drag.throttleCmd=0; drag.tiltCmd=0; }
+
+  // ---------- Voice (Apollo style) ----------
+  let muted=false, voices=[];
+  function loadVoices(){ voices=window.speechSynthesis?speechSynthesis.getVoices():[]; }
+  if(window.speechSynthesis){ loadVoices(); speechSynthesis.onvoiceschanged=loadVoices; }
+  function pickVoice(){
+    if(!voices.length) return null;
+    return voices.find(v=>/en-US/i.test(v.lang)&&/male|daniel|fred|alex|aaron/i.test(v.name))
+      || voices.find(v=>/en-US/i.test(v.lang)) || voices.find(v=>/en/i.test(v.lang)) || voices[0];
+  }
+  let AC=null;
+  function ac(){ if(!AC){ try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){} } return AC; }
+  function quindar(f=2525,d=0.09){
+    const a=ac(); if(!a) return;
+    const o=a.createOscillator(),g=a.createGain();
+    o.type='sine'; o.frequency.value=f;
+    g.gain.setValueAtTime(0.0001,a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.1,a.currentTime+0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001,a.currentTime+d);
+    o.connect(g);g.connect(a.destination);o.start();o.stop(a.currentTime+d+0.02);
+  }
+  function say(t,{intro=true,rate=0.92,pitch=0.72}={}){
+    if(muted||!window.speechSynthesis) return;
+    if(intro) quindar(2525);
+    const u=new SpeechSynthesisUtterance(t);
+    u.rate=rate;u.pitch=pitch;u.volume=1;
+    const v=pickVoice(); if(v)u.voice=v;
+    u.onend=()=>{ if(intro) quindar(2475); };
+    try{speechSynthesis.speak(u);}catch(e){}
+  }
+  function cancelVoice(){ if(window.speechSynthesis) try{speechSynthesis.cancel();}catch(e){} }
+
+  // ---------- State ----------
+  let S=null;
+  function newState(){
+    const d=DIFF[difficulty];
+    return {
+      x:W*0.5, alt:d.startAlt, vx:4+Math.random()*4, vy:0,
+      ang:0, angVel:0, throttle:0,
+      fuel:FUEL_MASS_FULL*d.fuel, fuelMax:FUEL_MASS_FULL*d.fuel, rcs:100,
+      running:false, ended:false, outcome:null, t:0,
+      terrain:null, padX:0, padW:d.pad, groundBaseY:0,
+      lastCallout:Infinity, contact:false, _fuelWarned:false,
+      shake:0, particles:[], stars:[],
+      camX: W*0.5 - W*0.45
+    };
+  }
+  function buildTerrain(){
+    const d=DIFF[difficulty], groundY=H-70; S.groundBaseY=groundY;
+    // wide world so there is room to fly with a following camera
+    S.worldMin=-W*1.6; S.worldMax=W*3.2;
+    const pts=[], step=14;
+    for(let x=S.worldMin;x<=S.worldMax;x+=step){
+      const n=Math.sin(x*0.011)*20+Math.sin(x*0.031)*10*d.rough+(Math.random()-0.5)*16*d.rough;
+      pts.push({x,y:groundY-28+n});
+    }
+    // pad placed a bit to the side of the start so there is a short traverse
+    const padCenter=W*0.5 + (Math.random()<0.5?-1:1)*(W*0.5+Math.random()*W*0.6);
+    S.padX=padCenter;
+    const half=S.padW/2, padY=groundY-8;
+    for(const p of pts){ if(Math.abs(p.x-padCenter)<half+step){ p.y=padY; if(Math.abs(p.x-padCenter)<half)p.pad=true; } }
+    S.terrain=pts;
+    // stars spread across the whole world width and full height so they never run out as the camera pans
+    S.stars=[]; const span=S.worldMax-S.worldMin;
+    for(let i=0;i<260;i++) S.stars.push({x:S.worldMin+Math.random()*span,y:Math.random()*(H*0.8),s:Math.random()*1.4+0.2,tw:Math.random()*6.28});
+  }
+  function groundYAt(wx){
+    const p=S.terrain; if(!p) return S.groundBaseY;
+    for(let i=0;i<p.length-1;i++){ if(wx>=p[i].x&&wx<=p[i+1].x){ const t=(wx-p[i].x)/(p[i+1].x-p[i].x); return p[i].y+(p[i+1].y-p[i].y)*t; } }
+    return S.groundBaseY;
+  }
+  const onPad=wx=>Math.abs(wx-S.padX)<S.padW/2;
+
+  // ---------- Sim ----------
+  function step(dt){
+    if(!S.running||S.ended) return;
+    S.t+=dt;
+
+    // --- interpret finger-drag input ---
+    // tiltCmd in -1..1 (from horizontal finger movement) sets TARGET attitude, max ~35°
+    const targetAng = drag.tiltCmd * (35*Math.PI/180);
+    // move toward target with RCS authority (simulates thruster response + costs fuel)
+    const hasRcs=S.rcs>0;
+    if(hasRcs){
+      const diff = targetAng - S.ang;
+      // proportional attitude control
+      const cmd = Math.max(-1,Math.min(1,diff*3 - S.angVel*0.8));
+      S.angVel += cmd*2.6*dt;
+      S.angVel *= Math.pow(0.25,dt); // damping
+      // RCS fuel use proportional to command effort
+      S.rcs=Math.max(0,S.rcs - (Math.abs(cmd)*RCS_BURN)*dt);
+    } else {
+      // no RCS fuel: attitude drifts freely
+      S.ang += 0;
+    }
+    S.ang += S.angVel*dt;
+
+    // THROTTLE from vertical finger movement: throttleCmd is the target (0..1)
+    let targetThrottle = drag.throttleCmd;
+    // smooth throttle response
+    S.throttle += (targetThrottle - S.throttle) * Math.min(1, dt*6);
+    let thr=S.throttle;
+    const hasFuel=S.fuel>0; if(!hasFuel) thr=0;
+
+    // --- forces ---
+    const mass=DRY_MASS+S.fuel;
+    const thrustN=MAX_THRUST*thr;
+    const ax=(thrustN/mass)*Math.sin(S.ang);
+    const ay=-(thrustN/mass)*Math.cos(S.ang)+G;
+    S.vx+=ax*dt; S.vy+=ay*dt;
+
+    if(thr>0&&hasFuel) S.fuel=Math.max(0,S.fuel-FUEL_BURN_AT_FULL*thr*dt);
+
+    S.alt-=S.vy*dt;
+    S.x+=S.vx*dt*WORLD_SCALE;
+
+    if(thr>0.02&&hasFuel) spawnPlume(thr);
+    updateParticles(dt);
+
+    // callouts (feet, Apollo flavor)
+    const callAts=[300,200,150,100,75,50,40,30,20,10,5];
+    for(const a of callAts){
+      if(S.lastCallout>a && S.alt<=a){
+        S.lastCallout=a;
+        let m=a+" feet";
+        if(a===40)m="40 feet, kicking up some dust";
+        say(m,{intro:false,rate:0.9,pitch:0.72});
+      }
+    }
+    if(S.lastCallout===Infinity)S.lastCallout=1000;
+
+    if(S.alt<=0.15) touchdown();
+    if(S.x<S.worldMin+40||S.x>S.worldMax-40) endGame('lost',"You have drifted beyond the landing corridor. The module is out of range.");
+    if(S.fuel/S.fuelMax<0.15 && !S._fuelWarned && S.fuel>0){ S._fuelWarned=true; say("Caution, propellant low.",{pitch:0.72}); }
+  }
+
+  function touchdown(){
+    const flat=onPad(S.x), tiltDeg=Math.abs(S.ang*180/Math.PI), vy=S.vy, vx=Math.abs(S.vx);
+    S.contact=true;
+    const softV=vy<=LIMITS.vy, softH=vx<=LIMITS.vx, level=tiltDeg<=LIMITS.tilt;
+    if(flat&&softV&&softH&&level){
+      endGame('landed',"Contact light. Engine stop. Houston, Tranquility Base here — the Eagle has landed. Outstanding flying, Commander.");
+    } else {
+      let r=[];
+      if(!flat)r.push("you came down on broken ground off the pad");
+      if(!softV)r.push("your rate of descent was too high at "+vy.toFixed(1)+" meters per second");
+      if(!softH)r.push("too much lateral drift");
+      if(!level)r.push("the module tipped past its stability margin");
+      endGame('crash',"Loss of signal. The lunar module is destroyed — "+r.join(", ")+". There is no rescue. We're sorry, Commander: you will never return to Earth.");
+    }
+  }
+  function endGame(outcome,msg){
+    if(S.ended)return;
+    S.ended=true;S.running=false;S.outcome=outcome;
+    if(outcome!=='landed'){ S.shake=14; explode(); }
+    cancelVoice();
+    setTimeout(()=>say(msg,{pitch:outcome==='landed'?0.72:0.66,rate:0.9}),250);
+    showOverlay(outcome,msg);
+    document.getElementById('hudBtns').classList.add('hidden');
+  }
+
+  // ---------- Particles ----------
+  function spawnPlume(thr){
+    const baseX=S.x, baseY=S.groundBaseY-S.alt*WORLD_SCALE, dir=S.ang;
+    for(let i=0;i<Math.ceil(thr*4);i++){
+      const sp=(Math.random()-0.5)*0.5, speed=120+Math.random()*160*thr;
+      S.particles.push({x:baseX+Math.sin(dir)*16,y:baseY+Math.cos(dir)*16,
+        vx:Math.sin(dir)*40+Math.sin(sp)*speed*0.3, vy:Math.cos(dir)*speed*0.4+speed*0.6,
+        life:0.5+Math.random()*0.4,age:0,r:2+Math.random()*3,kind:'flame'});
+    }
+    if(S.alt<40){ const gy=groundYAt(S.x);
+      for(let i=0;i<3;i++) S.particles.push({x:S.x+(Math.random()-0.5)*40,y:gy,vx:(Math.random()-0.5)*160,vy:-Math.random()*30,life:0.8,age:0,r:1.5+Math.random()*2,kind:'dust'}); }
+  }
+  function explode(){
+    const baseY=S.groundBaseY-S.alt*WORLD_SCALE;
+    for(let i=0;i<110;i++){ const a=Math.random()*6.28,sp=60+Math.random()*250;
+      S.particles.push({x:S.x,y:baseY,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-60,life:1.2+Math.random(),age:0,r:2+Math.random()*4,kind:'flame'}); }
+  }
+  function updateParticles(dt){
+    for(const p of S.particles){ p.age+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt; if(p.kind!=='dust')p.vy+=40*dt; p.vx*=Math.pow(0.4,dt); }
+    S.particles=S.particles.filter(p=>p.age<p.life);
+  }
+
+  // ---------- Render ----------
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    let ox=0,oy=0;
+    if(S.shake>0){ ox=(Math.random()-0.5)*S.shake;oy=(Math.random()-0.5)*S.shake;S.shake*=0.9;if(S.shake<0.4)S.shake=0; }
+    ctx.save();ctx.translate(ox,oy);
+    // fixed background: black + distant Earth (do not pan with camera)
+    ctx.fillStyle='#000';ctx.fillRect(-20,-20,W+40,H+40);
+    ctx.save();ctx.beginPath();ctx.arc(W*0.18,H*0.14,24,0,6.28);ctx.fillStyle='#1d3a6b';ctx.fill();
+    ctx.beginPath();ctx.arc(W*0.18,H*0.14,24,0,6.28);ctx.clip();
+    ctx.fillStyle='#2f7a3f';ctx.beginPath();ctx.arc(W*0.18-7,H*0.14+4,9,0,6.28);ctx.fill();
+    ctx.fillStyle='#3a8fbf';ctx.beginPath();ctx.arc(W*0.18+9,H*0.14-7,7,0,6.28);ctx.fill();ctx.restore();
+    ctx.strokeStyle='rgba(120,160,255,.25)';ctx.beginPath();ctx.arc(W*0.18,H*0.14,24,0,6.28);ctx.stroke();
+
+    // ----- CAMERA: follow the lander so it stays centered horizontally -----
+    // target keeps the module around 45% from the left; clamp so we never show past the world edges
+    let targetCam = S.x - W*0.45;
+    const maxCam = S.worldMax - W, minCam = S.worldMin;
+    targetCam = Math.max(minCam, Math.min(maxCam, targetCam));
+    S.camX += (targetCam - S.camX) * 0.08;                    // smooth follow
+    ctx.translate(-S.camX, 0);
+
+    // stars (parallax handled by drawing in world space; they span the whole world)
+    if(S.stars)for(const s of S.stars){s.tw+=0.04;const a=0.4+0.5*Math.abs(Math.sin(s.tw));ctx.fillStyle='rgba(255,255,255,'+a+')';ctx.fillRect(s.x,s.y,s.s,s.s);}
+    // terrain
+    if(S.terrain){
+      ctx.beginPath();ctx.moveTo(S.terrain[0].x,H+40);
+      for(const p of S.terrain)ctx.lineTo(p.x,p.y);
+      ctx.lineTo(S.terrain[S.terrain.length-1].x,H+40);ctx.closePath();
+      const g=ctx.createLinearGradient(0,H*0.6,0,H);g.addColorStop(0,'#3a3a42');g.addColorStop(1,'#111116');
+      ctx.fillStyle=g;ctx.fill();
+      ctx.strokeStyle='#6a6a76';ctx.lineWidth=1.5;ctx.beginPath();
+      for(let i=0;i<S.terrain.length;i++){const p=S.terrain[i];i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);}ctx.stroke();
+      const gy=groundYAt(S.padX);
+      ctx.strokeStyle='#ffcf5a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(S.padX-S.padW/2,gy-2);ctx.lineTo(S.padX+S.padW/2,gy-2);ctx.stroke();
+      const blink=Math.sin(S.t*6)>0;ctx.fillStyle=blink?'#ffcf5a':'#7a5a1a';
+      ctx.fillRect(S.padX-S.padW/2-2,gy-8,4,7);ctx.fillRect(S.padX+S.padW/2-2,gy-8,4,7);
+    }
+    for(const p of S.particles){const t=p.age/p.life;
+      if(p.kind==='dust')ctx.fillStyle='rgba(180,175,165,'+(0.5*(1-t))+')';
+      else{const c=t<0.5?[255,230,120]:[255,110,50];ctx.fillStyle='rgba('+c[0]+','+c[1]+','+c[2]+','+(1-t)+')';}
+      ctx.beginPath();ctx.arc(p.x,p.y,p.r*(1-t*0.4),0,6.28);ctx.fill();}
+    drawLander();
+    drawHUDvec();
+    ctx.restore();
+    updatePanel();
+  }
+  function drawLander(){
+    if(!S.terrain)return;
+    const baseY=S.groundBaseY-S.alt*WORLD_SCALE;
+    ctx.save();ctx.translate(S.x,baseY-14);ctx.rotate(S.ang);
+    const s=1.0;
+    ctx.fillStyle='#c9a84a';ctx.strokeStyle='#7a6220';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(-14,2);ctx.lineTo(-16,-8);ctx.lineTo(-9,-14);ctx.lineTo(9,-14);ctx.lineTo(16,-8);ctx.lineTo(14,2);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.fillStyle='#e8c65a';ctx.fillRect(-9,-12,18,4);
+    ctx.fillStyle='#d9d9de';ctx.strokeStyle='#8a8a92';
+    ctx.beginPath();ctx.moveTo(-9,-14);ctx.lineTo(-8,-24);ctx.lineTo(8,-24);ctx.lineTo(9,-14);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.fillStyle='#2a2a30';ctx.fillRect(-6,-22,4,4);ctx.fillRect(2,-22,4,4);
+    ctx.strokeStyle='#bbb';ctx.beginPath();ctx.moveTo(0,-24);ctx.lineTo(0,-32);ctx.stroke();
+    ctx.beginPath();ctx.arc(0,-33,2,0,6.28);ctx.fillStyle='#ddd';ctx.fill();
+    ctx.strokeStyle='#9a9aa2';ctx.lineWidth=2.2;
+    const legs=[[-14,2,-24,16],[14,2,24,16],[-6,2,-10,17],[6,2,10,17]];
+    for(const L of legs){ctx.beginPath();ctx.moveTo(L[0],L[1]);ctx.lineTo(L[2],L[3]);ctx.stroke();ctx.fillStyle='#9a9aa2';ctx.beginPath();ctx.arc(L[2],L[3],2.4,0,6.28);ctx.fill();}
+    ctx.fillStyle='#5a5a60';ctx.beginPath();ctx.moveTo(-5,2);ctx.lineTo(5,2);ctx.lineTo(3,10);ctx.lineTo(-3,10);ctx.closePath();ctx.fill();
+    if(S.throttle>0.02&&S.fuel>0&&S.running){
+      const fl=8+S.throttle*22+Math.random()*6;
+      const g=ctx.createLinearGradient(0,10,0,10+fl);
+      g.addColorStop(0,'rgba(255,240,180,.95)');g.addColorStop(.5,'rgba(255,140,60,.8)');g.addColorStop(1,'rgba(255,80,40,0)');
+      ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(-3,10);ctx.lineTo(3,10);ctx.lineTo(1.4,10+fl);ctx.lineTo(-1.4,10+fl);ctx.closePath();ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawHUDvec(){
+    if(!S.running)return;
+    const baseY=S.groundBaseY-S.alt*WORLD_SCALE;
+    ctx.save();ctx.translate(S.x,baseY-14);
+    ctx.strokeStyle='rgba(120,255,140,.7)';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(S.vx*3,S.vy*3);ctx.stroke();
+    ctx.fillStyle='rgba(120,255,140,.7)';ctx.beginPath();ctx.arc(S.vx*3,S.vy*3,2.5,0,6.28);ctx.fill();ctx.restore();
+    if(S.alt>30){ctx.strokeStyle='rgba(255,207,90,.22)';ctx.setLineDash([4,6]);
+      ctx.beginPath();ctx.moveTo(S.x,baseY);ctx.lineTo(S.padX,groundYAt(S.padX));ctx.stroke();ctx.setLineDash([]);}
+  }
+
+  // ---------- Panel ----------
+  const el=id=>document.getElementById(id);
+  function updatePanel(){
+    el('g-alt').textContent=Math.max(0,S.alt).toFixed(0);
+    el('g-vy').textContent=S.vy.toFixed(1);
+    el('g-vx').textContent=S.vx.toFixed(1);
+    el('g-thr').textContent=(S.throttle*100).toFixed(0);
+    const fp=Math.max(0,S.fuel/S.fuelMax*100);
+    el('g-fuel').textContent=fp.toFixed(0)+'%';el('b-fuel').style.width=fp+'%';
+    el('b-fuel').parentElement.className='bar fuel'+(fp<15?' warn':'');
+    el('g-rcs').textContent=S.rcs.toFixed(0)+'%';el('b-rcs').style.width=S.rcs+'%';
+    const low=S.alt<80;
+    el('c-vy').className='cell'+((Math.abs(S.vy)>LIMITS.vy&&low)?' warnv':'');
+    el('c-vx').className='cell'+((Math.abs(S.vx)>LIMITS.vx&&low)?' warnv':'');
+    // needle
+    el('needle').style.transform='translate(-50%,-100%) rotate('+(S.ang)+'rad)';
+    el('needle').style.background=Math.abs(S.ang*180/Math.PI)>LIMITS.tilt?'var(--red)':'var(--green)';
+    const st=el('status');
+    if(S.ended){
+      if(S.outcome==='landed'){st.textContent='THE EAGLE HAS LANDED';st.className='';}
+      else if(S.outcome==='lost'){st.textContent='OUT OF RANGE';st.className='bad';}
+      else{st.textContent='LOSS OF SIGNAL';st.className='bad';}
+    } else if(S.running){
+      const tiltDeg=Math.abs(S.ang*180/Math.PI);
+      if(low&&(tiltDeg>LIMITS.tilt||Math.abs(S.vy)>LIMITS.vy)){st.textContent='CAUTION · CHECK RATE/ATTITUDE';st.className='warn';}
+      else{st.textContent='DESCENT · NOMINAL';st.className='';}
+    } else {st.textContent='STANDBY';st.className='';}
+  }
+
+  // ---------- Overlay ----------
+  function showOverlay(outcome,msg){
+    const ov=el('overlay');ov.classList.remove('hidden');ov.innerHTML='';
+    const sub=document.createElement('div');sub.className='sub';
+    const h1=document.createElement('h1');const p=document.createElement('p');
+    const stats=document.createElement('div');stats.id='stats';
+    if(outcome==='landed'){sub.textContent='Tranquility Base';h1.className='good';h1.textContent='TOUCHDOWN';p.textContent=msg;}
+    else if(outcome==='lost'){sub.textContent='Mission Control';h1.className='bad';h1.textContent='OUT OF RANGE';p.textContent=msg;}
+    else{sub.textContent='Loss of Signal';h1.className='bad';h1.textContent='CRASH';p.textContent=msg;}
+    const used=(1-S.fuel/S.fuelMax)*100;
+    stats.innerHTML='Vertical <b>'+S.vy.toFixed(1)+' m/s</b> · horizontal <b>'+Math.abs(S.vx).toFixed(1)+' m/s</b> · tilt <b>'+Math.abs(S.ang*180/Math.PI).toFixed(0)+'°</b><br>propellant used <b>'+used.toFixed(0)+'%</b> · time <b>'+S.t.toFixed(0)+'s</b>';
+    const btn=document.createElement('button');btn.className='btn';btn.textContent='Fly Again';btn.onclick=startGame;
+    ov.append(sub,h1,p,stats,btn);
+  }
+
+  // ---------- Start ----------
+  function startGame(){
+    if(ac()&&ac().state==='suspended') ac().resume();
+    S=newState();resize();buildTerrain();
+    S.camX = Math.max(S.worldMin, Math.min(S.worldMax - W, S.x - W*0.45)); // snap camera onto lander immediately
+    resetInput();
+    S.running=true;S.ended=false;
+    el('overlay').classList.add('hidden');
+    el('hudBtns').classList.remove('hidden');
+    setTimeout(()=>say("Guidance is go for powered descent. You are cleared to land. Easy on the throttle, Commander.",{pitch:0.72,rate:0.92}),450);
+    last=performance.now();
+  }
+
+  // ---------- Loop ----------
+  let last=0;
+  function loop(now){ let dt=(now-last)/1000;last=now; if(dt>0.05)dt=0.05;
+    if(S){ if(S.running&&!S.ended)step(dt); draw(); } requestAnimationFrame(loop); }
+
+  // ---------- Boot ----------
+  function boot(){
+    resize();
+    S=newState();buildTerrain();
+    document.querySelectorAll('.diff button').forEach(b=>{
+      b.onclick=()=>{document.querySelectorAll('.diff button').forEach(x=>x.classList.remove('sel'));
+        b.classList.add('sel');difficulty=b.dataset.d;S=newState();buildTerrain();};
+    });
+    const vsw=el('voiceSw');
+    vsw.onclick=()=>{muted=!muted;vsw.classList.toggle('on',!muted);if(muted)cancelVoice();};
+    el('startBtn').onclick=startGame;
+    el('btnMute').onclick=()=>{muted=!muted;el('btnMute').textContent=muted?'UNMUTE':'MUTE';vsw.classList.toggle('on',!muted);if(muted)cancelVoice();};
+    // finger-drag controls on the play surface
+    cv.addEventListener('touchstart',touchStart,{passive:false});
+    cv.addEventListener('touchmove',touchMove,{passive:false});
+    cv.addEventListener('touchend',touchEnd,{passive:false});
+    cv.addEventListener('touchcancel',touchEnd,{passive:false});
+    // also support mouse drag for testing on desktop
+    let mouseDown=false;
+    cv.addEventListener('mousedown',e=>{mouseDown=true;drag.active=true;drag.id='mouse';drag.lastX=e.clientX;drag.lastY=e.clientY;});
+    window.addEventListener('mousemove',e=>{ if(!mouseDown)return;
+      const dx=(e.clientX-drag.lastX)/W, dy=(e.clientY-drag.lastY)/H;
+      drag.lastX=e.clientX; drag.lastY=e.clientY;
+      drag.throttleCmd=Math.max(0,Math.min(1,drag.throttleCmd - dy*THROTTLE_SENS));
+      drag.tiltCmd=Math.max(-1,Math.min(1,drag.tiltCmd + dx*TILT_SENS));
+    });
+    window.addEventListener('mouseup',()=>{mouseDown=false;drag.active=false;drag.id=null;});
+    requestAnimationFrame(loop);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
